@@ -1,57 +1,64 @@
 /**
-The data source for obtaining book information from Google Books API.
-@param {string} apiKey - Your Google Books API key.
-More info about Google Books API: https://developers.google.com/books/docs/v1/getting_started
-@example 
-var books = new GoogleBooks("YOUR_API_KEY");
-var r = books.search(query);
-result(r, function(id) { return books.extra(id); });
-*/
-function GoogleBooks(apiKey) {
+ * Discogs API Data Source for Memento
+ * @param {string} apiKey - Consumer key.
+ * @param {string} apiSecret - Consumer secret.
+ * @param {string} type - release, master, artist.
+ */
+
+function Discogs(apiKey, apiSecret, type) {
     this.apiKey = apiKey;
+    this.apiSecret = apiSecret;
+    this.type = type;
 }
 
-/**
-Issue a search query to Google Books database.
-@param {string} query - Search query.
-*/
-GoogleBooks.prototype.search = function(query) {
-    var result = http().get("https://www.googleapis.com/books/v1/volumes?q=" + encodeURIComponent(query) + "&key=" + this.apiKey);
+// Search query
+Discogs.prototype.search = function (query) {
+    var url = "https://api.discogs.com/database/search?q=" + encodeURIComponent(query)
+        + "&key=" + this.apiKey
+        + "&secret=" + this.apiSecret
+        + "&type=" + this.type;
+
+    var result = http().get(url);
     var json = JSON.parse(result.body);
-    if (!json.items) return [];
-    
-    return json.items.map(function(item) {
-        return {
-            id: item.id,
-            title: item.volumeInfo.title || "",
-            authors: (item.volumeInfo.authors || []).join(", "),
-            publishedDate: item.volumeInfo.publishedDate || "",
-            description: item.volumeInfo.description || "",
-            thumbnail: item.volumeInfo.imageLinks ? item.volumeInfo.imageLinks.thumbnail : ""
-        };
-    });
+    return json.results;
 }
 
-/**
-Get detailed info about a specific book by ID.
-@param {string} id - The Google Books volume ID.
-*/
-GoogleBooks.prototype.extra = function(id) {
-    var resultJson = http().get("https://www.googleapis.com/books/v1/volumes/" + id + "?key=" + this.apiKey);
+// Barcode search
+Discogs.prototype.barcode = function (code) {
+    var url = "https://api.discogs.com/database/search?barcode=" + encodeURIComponent(code)
+        + "&key=" + this.apiKey
+        + "&secret=" + this.apiSecret
+        + "&type=" + this.type;
+
+    var result = http().get(url);
+    var json = JSON.parse(result.body);
+    return json.results;
+}
+
+// Extra info
+Discogs.prototype.extra = function (id) {
+    var url = "https://api.discogs.com/" + this.type + "s/" + id
+        + "?key=" + this.apiKey
+        + "&secret=" + this.apiSecret;
+
+    var resultJson = http().get(url);
     var result = JSON.parse(resultJson.body);
-    var info = result.volumeInfo || {};
-    
-    return {
-        id: id,
-        title: info.title || "",
-        authors: (info.authors || []).join(", "),
-        publisher: info.publisher || "",
-        publishedDate: info.publishedDate || "",
-        description: info.description || "",
-        categories: (info.categories || []).join(", "),
-        pageCount: info.pageCount || "",
-        language: info.language || "",
-        previewLink: info.previewLink || "",
-        thumbnail: info.imageLinks ? info.imageLinks.thumbnail : ""
-    };
+
+    if (result.images) result.images = result.images.map(e => e.uri).join();
+    if (result.videos) result.videos = result.videos.map(e => e.uri).join();
+    if (result.artists) result.artists = result.artists.map(e => e.name).join();
+    if (result.tracklist) result.tracklist = result.tracklist.map(e => e.position + ". " + e.title + " " + e.duration).join("\n");
+    if (result.styles) result.styles = result.styles.join();
+    if (result.genres) result.genres = result.genres.join();
+
+    return result;
+}
+
+// Memento entry point
+function main(query) {
+    var discogs = new Discogs("YOUR_KEY", "YOUR_SECRET", "release");
+    var r = discogs.search(query);
+    return result(r, function (id) {
+        return discogs.extra(id);
+    });
 }
