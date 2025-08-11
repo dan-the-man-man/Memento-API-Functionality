@@ -55,8 +55,3 @@ GoogleBooks.prototype.extra = function(id) {
         thumbnail: info.imageLinks ? info.imageLinks.thumbnail : ""
     };
 }
-
-// CUSTOM SCRIPT CALL
-var books = new GoogleBooks("YOUR_API_KEY"); // put your Google Books API key here
-var r = books.search(query);
-result(r, function(id) { return books.extra(id); });
