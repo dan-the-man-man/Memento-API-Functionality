@@ -1,81 +1,62 @@
-/* media_sources_memento.js
-   Memento-compatible, ES5-safe helper for Google Books + MangaDex.
-   Exposes: GoogleBooks.prototype.search(query) and MangaDex.prototype.search(query)
+/**
+The data source for obtaining book information from Google Books API.
+@param {string} apiKey - Your Google Books API key.
+More info about Google Books API: https://developers.google.com/books/docs/v1/getting_started
+@example 
+var books = new GoogleBooks("YOUR_API_KEY");
+var r = books.search(query);
+result(r, function(id) { return books.extra(id); });
 */
+function GoogleBooks(apiKey) {
+    this.apiKey = apiKey;
+}
 
-function GoogleBooks() {}
-
+/**
+Issue a search query to Google Books database.
+@param {string} query - Search query.
+*/
 GoogleBooks.prototype.search = function(query) {
-    try {
-        var url = "https://www.googleapis.com/books/v1/volumes?q=" + encodeURIComponent(query) + "&maxResults=5";
-        var resp = http().get(url);
-        // Some http wrappers return string, some object with .body — handle both
-        var body = (typeof resp === 'string') ? resp : (resp && resp.body ? resp.body : '');
-        var json = body ? JSON.parse(body) : {};
-        var out = [];
-        var items = json.items || [];
-        for (var i = 0; i < items.length; i++) {
-            var v = items[i].volumeInfo || {};
-            out.push({
-                title: v.title || "",
-                desc: (v.authors ? v.authors.join(", ") + " — " : "") + (v.description ? (v.description.length > 200 ? v.description.substring(0,200) + "..." : v.description) : ""),
-                thumb: (v.imageLinks && v.imageLinks.thumbnail) ? v.imageLinks.thumbnail : "",
-                id: "GB:" + (items[i].id || ("gb_" + i))
-            });
-        }
-        return out;
-    } catch (e) {
-        log("GoogleBooks.search error: " + e);
-        return [];
-    }
-};
+    var result = http().get("https://www.googleapis.com/books/v1/volumes?q=" + encodeURIComponent(query) + "&key=" + this.apiKey);
+    var json = JSON.parse(result.body);
+    if (!json.items) return [];
+    
+    return json.items.map(function(item) {
+        return {
+            id: item.id,
+            title: item.volumeInfo.title || "",
+            authors: (item.volumeInfo.authors || []).join(", "),
+            publishedDate: item.volumeInfo.publishedDate || "",
+            description: item.volumeInfo.description || "",
+            thumbnail: item.volumeInfo.imageLinks ? item.volumeInfo.imageLinks.thumbnail : ""
+        };
+    });
+}
 
-function MangaDex() {}
+/**
+Get detailed info about a specific book by ID.
+@param {string} id - The Google Books volume ID.
+*/
+GoogleBooks.prototype.extra = function(id) {
+    var resultJson = http().get("https://www.googleapis.com/books/v1/volumes/" + id + "?key=" + this.apiKey);
+    var result = JSON.parse(resultJson.body);
+    var info = result.volumeInfo || {};
+    
+    return {
+        id: id,
+        title: info.title || "",
+        authors: (info.authors || []).join(", "),
+        publisher: info.publisher || "",
+        publishedDate: info.publishedDate || "",
+        description: info.description || "",
+        categories: (info.categories || []).join(", "),
+        pageCount: info.pageCount || "",
+        language: info.language || "",
+        previewLink: info.previewLink || "",
+        thumbnail: info.imageLinks ? info.imageLinks.thumbnail : ""
+    };
+}
 
-MangaDex.prototype.search = function(query) {
-    try {
-        var url = "https://api.mangadex.org/manga?title=" + encodeURIComponent(query) + "&limit=5&includes[]=cover_art";
-        var resp = http().get(url);
-        var body = (typeof resp === 'string') ? resp : (resp && resp.body ? resp.body : '');
-        var json = body ? JSON.parse(body) : {};
-        var data = json.data || [];
-        var out = [];
-        for (var i = 0; i < data.length; i++) {
-            var m = data[i];
-            var attr = m.attributes || {};
-            // find cover filename safely
-            var coverFileName = "";
-            if (m.relationships && m.relationships.length) {
-                for (var j = 0; j < m.relationships.length; j++) {
-                    if (m.relationships[j] && m.relationships[j].type === "cover_art" && m.relationships[j].attributes && m.relationships[j].attributes.fileName) {
-                        coverFileName = m.relationships[j].attributes.fileName;
-                        break;
-                    }
-                }
-            }
-            var coverUrl = coverFileName ? ("https://uploads.mangadex.org/covers/" + (m.id || "") + "/" + coverFileName) : "";
-            // description may be object with languages; try 'en' fallback
-            var desc = "";
-            try {
-                if (attr.description) {
-                    if (typeof attr.description === "string") desc = attr.description;
-                    else if (attr.description.en) desc = attr.description.en;
-                    else {
-                        // pick first property
-                        for (var k in attr.description) { if (attr.description[k]) { desc = attr.description[k]; break; } }
-                    }
-                }
-            } catch(e2) { desc = ""; }
-            out.push({
-                title: (attr.title && (attr.title.en || (function(){ for(var t in attr.title){ return attr.title[t]; }})() )) || "",
-                desc: desc ? (desc.length > 200 ? desc.substring(0,200) + "..." : desc) : "",
-                thumb: coverUrl,
-                id: "MD:" + (m.id || ("md_" + i))
-            });
-        }
-        return out;
-    } catch (e) {
-        log("MangaDex.search error: " + e);
-        return [];
-    }
-};
+// CUSTOM SCRIPT CALL
+var books = new GoogleBooks("YOUR_API_KEY"); // put your Google Books API key here
+var r = books.search(query);
+result(r, function(id) { return books.extra(id); });
