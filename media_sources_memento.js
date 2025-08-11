@@ -1,64 +1,160 @@
 /**
- * Discogs API Data Source for Memento
- * @param {string} apiKey - Consumer key.
- * @param {string} apiSecret - Consumer secret.
- * @param {string} type - release, master, artist.
+ * Data source for obtaining information from MangaDex and Google Books APIs
+ * @param {string} apiKey - Google Books API key (optional for MangaDex)
+ * @param {string} type - Either "manga" or "book"
+ * @example 
+ * var source = new MangaBook(null, "manga");
+ * var r = source.search(query);
+ * result(r, function(id) { return source.extra(id); });
  */
-
-function Discogs(apiKey, apiSecret, type) {
+function MangaBook(apiKey, type) {
     this.apiKey = apiKey;
-    this.apiSecret = apiSecret;
     this.type = type;
 }
 
-// Search query
-Discogs.prototype.search = function (query) {
-    var url = "https://api.discogs.com/database/search?q=" + encodeURIComponent(query)
-        + "&key=" + this.apiKey
-        + "&secret=" + this.apiSecret
-        + "&type=" + this.type;
+/**
+ * Issue a search query to the appropriate API
+ * @param {string} query - Search query
+ */
+MangaBook.prototype.search = function(query) {
+    if (this.type === "manga") {
+        return this.searchMangaDex(query);
+    } else if (this.type === "book") {
+        return this.searchGoogleBooks(query);
+    }
+    return [];
+};
 
+/**
+ * Search MangaDex API
+ * @param {string} query - Search query
+ */
+MangaBook.prototype.searchMangaDex = function(query) {
+    var limit = 7; // MangaDex returns 7 results
+    var url = "https://api.mangadex.org/manga?limit=" + limit + "&title=" + encodeURIComponent(query);
     var result = http().get(url);
     var json = JSON.parse(result.body);
-    return json.results;
-}
-
-// Barcode search
-Discogs.prototype.barcode = function (code) {
-    var url = "https://api.discogs.com/database/search?barcode=" + encodeURIComponent(code)
-        + "&key=" + this.apiKey
-        + "&secret=" + this.apiSecret
-        + "&type=" + this.type;
-
-    var result = http().get(url);
-    var json = JSON.parse(result.body);
-    return json.results;
-}
-
-// Extra info
-Discogs.prototype.extra = function (id) {
-    var url = "https://api.discogs.com/" + this.type + "s/" + id
-        + "?key=" + this.apiKey
-        + "&secret=" + this.apiSecret;
-
-    var resultJson = http().get(url);
-    var result = JSON.parse(resultJson.body);
-
-    if (result.images) result.images = result.images.map(e => e.uri).join();
-    if (result.videos) result.videos = result.videos.map(e => e.uri).join();
-    if (result.artists) result.artists = result.artists.map(e => e.name).join();
-    if (result.tracklist) result.tracklist = result.tracklist.map(e => e.position + ". " + e.title + " " + e.duration).join("\n");
-    if (result.styles) result.styles = result.styles.join();
-    if (result.genres) result.genres = result.genres.join();
-
-    return result;
-}
-
-// Memento entry point
-function main(query) {
-    var discogs = new Discogs("YOUR_KEY", "YOUR_SECRET", "release");
-    var r = discogs.search(query);
-    return result(r, function (id) {
-        return discogs.extra(id);
+    
+    return json.data.map(function(manga) {
+        return {
+            id: manga.id,
+            title: manga.attributes.title.en || Object.values(manga.attributes.title)[0],
+            year: manga.attributes.year,
+            description: manga.attributes.description?.en || "",
+            type: "manga"
+        };
     });
-}
+};
+
+/**
+ * Search Google Books API
+ * @param {string} query - Search query
+ */
+MangaBook.prototype.searchGoogleBooks = function(query) {
+    var limit = 3; // Google Books returns 3 results
+    var url = "https://www.googleapis.com/books/v1/volumes?q=" + 
+              encodeURIComponent(query) + "&maxResults=" + limit + 
+              (this.apiKey ? "&key=" + this.apiKey : "");
+    var result = http().get(url);
+    var json = JSON.parse(result.body);
+    
+    if (!json.items) return [];
+    
+    return json.items.map(function(book) {
+        return {
+            id: book.id,
+            title: book.volumeInfo.title,
+            authors: book.volumeInfo.authors ? book.volumeInfo.authors.join(", ") : "",
+            year: book.volumeInfo.publishedDate ? book.volumeInfo.publishedDate.substring(0,4) : "",
+            description: book.volumeInfo.description || "",
+            type: "book"
+        };
+    });
+};
+
+/**
+ * Get extra details for a specific item
+ * @param {string} id - The resource identifier
+ */
+MangaBook.prototype.extra = function(id) {
+    if (this.type === "manga") {
+        return this.getMangaDexDetails(id);
+    } else if (this.type === "book") {
+        return this.getGoogleBooksDetails(id);
+    }
+    return {};
+};
+
+/**
+ * Get detailed information from MangaDex
+ * @param {string} id - Manga ID
+ */
+MangaBook.prototype.getMangaDexDetails = function(id) {
+    var url = "https://api.mangadex.org/manga/" + id + "?includes[]=author&includes[]=artist";
+    var result = http().get(url);
+    var json = JSON.parse(result.body);
+    var manga = json.data;
+    
+    var details = {
+        title: manga.attributes.title.en || Object.values(manga.attributes.title)[0],
+        altTitles: manga.attributes.altTitles ? 
+                  Object.values(manga.attributes.altTitles).map(t => Object.values(t)[0]).join(", ") : "",
+        description: manga.attributes.description?.en || "",
+        year: manga.attributes.year,
+        status: manga.attributes.status,
+        contentRating: manga.attributes.contentRating,
+        tags: manga.attributes.tags ? 
+             manga.attributes.tags.map(tag => tag.attributes.name.en).join(", ") : "",
+        authors: [],
+        artists: [],
+        links: []
+    };
+    
+    // Get authors and artists
+    json.relationships.forEach(function(rel) {
+        if (rel.type === "author") details.authors.push(rel.attributes?.name);
+        if (rel.type === "artist") details.artists.push(rel.attributes?.name);
+    });
+    
+    // Get links
+    if (manga.attributes.links) {
+        for (var key in manga.attributes.links) {
+            details.links.push(key + ": " + manga.attributes.links[key]);
+        }
+    }
+    
+    // Convert arrays to strings
+    details.authors = details.authors.join(", ");
+    details.artists = details.artists.join(", ");
+    details.links = details.links.join("\n");
+    
+    return details;
+};
+
+/**
+ * Get detailed information from Google Books
+ * @param {string} id - Book ID
+ */
+MangaBook.prototype.getGoogleBooksDetails = function(id) {
+    var url = "https://www.googleapis.com/books/v1/volumes/" + id + 
+              (this.apiKey ? "?key=" + this.apiKey : "");
+    var result = http().get(url);
+    var book = JSON.parse(result.body);
+    var info = book.volumeInfo;
+    
+    return {
+        title: info.title,
+        subtitle: info.subtitle || "",
+        authors: info.authors ? info.authors.join(", ") : "",
+        publisher: info.publisher || "",
+        publishedDate: info.publishedDate || "",
+        description: info.description || "",
+        isbn: info.industryIdentifiers ? 
+             info.industryIdentifiers.map(id => id.type + ": " + id.identifier).join(", ") : "",
+        pageCount: info.pageCount || "",
+        categories: info.categories ? info.categories.join(", ") : "",
+        language: info.language || "",
+        previewLink: info.previewLink || "",
+        infoLink: info.infoLink || ""
+    };
+};
